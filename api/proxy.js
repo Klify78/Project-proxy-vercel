@@ -18,7 +18,7 @@ const BLOCKED_HEADERS = new Set([
 
 export default async function handler(req, res) {
   // Apontando para o seu IP da Oracle
-  const target = `https://164.152.43.13:443${req.url}`;
+  const target = `https://164.152.43.13:8383${req.url}`;
 
   const cleanHeaders = Object.fromEntries(
     Object.entries(req.headers).filter(([k]) => !BLOCKED_HEADERS.has(k.toLowerCase()))

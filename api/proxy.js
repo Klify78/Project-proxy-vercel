@@ -1,7 +1,6 @@
 import http from 'http';
 
-const agent = new https.Agent({
-  rejectUnauthorized: false, 
+const agent = new http.Agent({
   keepAlive: true,
   keepAliveMsecs: 10000,
   maxSockets: 100,
@@ -17,7 +16,7 @@ const BLOCKED_HEADERS = new Set([
 ]);
 
 export default async function handler(req, res) {
-  // Apontando para o seu IP da Oracle
+  // Alvo em HTTP puro na porta 8383 do seu VPS
   const target = `http://164.152.43.13:8383${req.url}`;
 
   const cleanHeaders = Object.fromEntries(
@@ -35,7 +34,8 @@ export default async function handler(req, res) {
     timeout: 60000,
   };
 
-  const proxyReq = https.request(target, options, (proxyRes) => {
+  // Usando http.request corretamente
+  const proxyReq = http.request(target, options, (proxyRes) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.setHeader('Cache-Control', 'no-store');
     res.writeHead(proxyRes.statusCode, proxyRes.headers);

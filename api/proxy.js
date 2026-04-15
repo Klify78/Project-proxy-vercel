@@ -1,12 +1,6 @@
-import http from 'http';
-
-const agent = new http.Agent({
-  keepAlive: true,
-  keepAliveMsecs: 10000,
-  maxSockets: 100,
-  maxFreeSockets: 50,
-  timeout: 60000,
-});
+export const config = {
+  runtime: 'edge', // Força a Vercel a usar o Edge Runtime e não cobrar pela memória em espera
+};
 
 const BLOCKED_HEADERS = new Set([
   'host', 'connection', 'x-forwarded-for',
@@ -15,54 +9,54 @@ const BLOCKED_HEADERS = new Set([
   'cdn-loop', 'cf-connecting-ip',
 ]);
 
-export default async function handler(req, res) {
-  // Alvo em HTTP puro na porta 8383 do seu VPS
-  const target = `http://164.152.43.13:8383${req.url}`;
+export default async function handler(req) {
+  // Extrai a URL original e direciona para o seu VPS na porta 8383
+  const url = new URL(req.url);
+  const target = `http://164.152.43.13:8383${url.pathname}${url.search}`;
 
-  const cleanHeaders = Object.fromEntries(
-    Object.entries(req.headers).filter(([k]) => !BLOCKED_HEADERS.has(k.toLowerCase()))
-  );
+  // Limpa e reconstrói os cabeçalhos
+  const newHeaders = new Headers();
+  for (const [key, value] of req.headers.entries()) {
+    if (!BLOCKED_HEADERS.has(key.toLowerCase())) {
+      newHeaders.set(key, value);
+    }
+  }
+  
+  // Força os cabeçalhos específicos da sua configuração original
+  newHeaders.set('host', '164.152.43.13');
+  newHeaders.set('connection', 'keep-alive');
 
-  const options = {
+  const init = {
     method: req.method,
-    headers: {
-      ...cleanHeaders,
-      host: '164.152.43.13',
-      connection: 'keep-alive',
-    },
-    agent,
-    timeout: 60000,
+    headers: newHeaders,
+    redirect: 'manual', // Evita que o fetch siga redirecionamentos sozinho
   };
 
-  // Usando http.request corretamente
-  const proxyReq = http.request(target, options, (proxyRes) => {
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.setHeader('Cache-Control', 'no-store');
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    proxyRes.pipe(res, { end: true, highWaterMark: 64 * 1024 });
-  });
+  // Se não for GET ou HEAD, repassa o corpo da requisição (essencial para o xhttp)
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    init.body = req.body;
+    // O parâmetro abaixo é obrigatório no Edge Runtime para fazer proxy de streams (como xhttp)
+    init.duplex = 'half'; 
+  }
 
-  proxyReq.on('socket', (socket) => {
-    socket.setNoDelay(true);
-    socket.setKeepAlive(true, 10000);
-  });
+  try {
+    // Faz a requisição para a sua VPS
+    const response = await fetch(target, init);
 
-  proxyReq.on('timeout', () => {
-    proxyReq.destroy();
-    if (!res.headersSent) res.status(504).end('Gateway Timeout');
-  });
+    // Copia os cabeçalhos de resposta da VPS
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.set('X-Accel-Buffering', 'no');
+    responseHeaders.set('Cache-Control', 'no-store');
 
-  proxyReq.on('error', (err) => {
-    console.error('Proxy error:', err.message);
-    if (!res.headersSent) res.status(502).end('Bad Gateway');
-  });
+    // Retorna a resposta contínua (stream) para o cliente
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
 
-  req.pipe(proxyReq, { end: true, highWaterMark: 64 * 1024 });
+  } catch (error) {
+    console.error('Proxy error:', error.message);
+    return new Response('Bad Gateway', { status: 502 });
+  }
 }
-
-export const config = {
-  api: {
-    bodyParser: false,
-    responseLimit: false,
-  },
-};
